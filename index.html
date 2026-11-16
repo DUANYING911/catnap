@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>CatNap</title>
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CatNap">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #000; color: #ccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  /* ---------- Stage: everything the participant sees ---------- */
+  #stage { position: fixed; inset: 0; background: var(--background, #000); touch-action: none; overflow: hidden; }
+  #calib { position: absolute; left: 50%; top: 50%; width: min(78vw, 70vh); transform-origin: 50% 50%; }
+  #drift { transition: transform 30s linear; }          /* duration set from config */
+  #breath { transform-origin: 50% 80%; will-change: transform; }
+  #cat { display: block; width: 100%; height: auto; overflow: visible; }
+
+  /* SVG parts. transform-box: fill-box lets each part move around its own centre. */
+  #cat * { transform-box: fill-box; }
+  .fur     { fill: var(--fur); stroke: var(--furEdge); stroke-width: 3; stroke-linejoin: round; }
+  .earIn   { fill: var(--earInside); }
+  .line    { fill: none; stroke: var(--line); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+  .whisker { fill: none; stroke: var(--line); stroke-width: 1.6; stroke-linecap: round; opacity: .55; }
+  #settle  { transform-origin: 50% 100%; }
+  #head    { transform-origin: 50% 100%; }
+  #earL    { transform-origin: 70% 100%; }
+  #earR    { transform-origin: 30% 100%; }
+  #whL     { transform-origin: 100% 50%; }
+  #whR     { transform-origin: 0% 50%; }
+  #mouth   { transform-origin: 50% 0%; }
+  #yawn    { transform-origin: 50% 0%; transform: scale(0); }
+  .eye-open   { transform-origin: 50% 50%; transform: scaleY(.04); opacity: 0; }   /* default: eyes closed */
+  .eye-closed { opacity: 1; }
+
+  #clock {
+    display: none; text-align: center; color: var(--clock);
+    font-size: min(22vw, 16vh); font-weight: 200; letter-spacing: .02em;
+    font-variant-numeric: tabular-nums;
+  }
+  body.control #cat { display: none; }
+  body.control #clock { display: block; }
+
+  /* ---------- Resume screen (researcher, before a session) ---------- */
+  #resume {
+    position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: #000; color: #555; text-align: center; padding: 24px; font-size: 15px; line-height: 1.5;
+  }
+  #resume b { color: #777; font-size: 18px; font-weight: 500; }
+  #resume button { margin-top: 10px; }
+
+  /* ---------- Setup panel (researcher only) ---------- */
+  #setup {
+    position: fixed; left: 0; right: 0; bottom: 0; display: none;
+    max-height: 58vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    background: rgba(28, 28, 32, .94); color: #ddd;
+    border-radius: 18px 18px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    font-size: 14px; line-height: 1.4; touch-action: pan-y;
+  }
+  #setup.collapsed { max-height: none; overflow: hidden; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  #setup.collapsed .body { display: none; }
+  .head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .head-row h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .sec { border-top: 1px solid #3a3a40; padding-top: 12px; margin-top: 12px; }
+  .sec h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #999; margin: 0 0 8px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .row input[type=range] { flex: 1; }
+  .muted { color: #999; font-size: 12.5px; }
+  input[type=number] { width: 64px; background: #111; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 6px; font-size: 15px; }
+  button {
+    font: inherit; border: 0; border-radius: 10px; padding: 9px 14px;
+    background: #3a3a42; color: #eee; cursor: pointer;
+  }
+  button.primary { background: #4f7a5a; color: #fff; font-weight: 600; width: 100%; padding: 13px; font-size: 16px; }
+  button.danger { background: #5a3434; }
+  .seg { display: flex; background: #111; border-radius: 10px; padding: 3px; }
+  .seg button { flex: 1; background: transparent; color: #aaa; }
+  .seg button.on { background: #3f3f48; color: #fff; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<!-- ====================== What the participant sees ====================== -->
+<div id="stage">
+  <div id="calib">
+    <div id="drift">
+      <div id="breath">
+        <!-- An original, minimal cat face. viewBox units: 300 x 250. -->
+        <svg id="cat" viewBox="0 0 300 250" aria-hidden="true">
+          <g id="settle">
+            <g id="head">
+              <!-- ears (drawn first so the head covers their base) -->
+              <g id="earL">
+                <path class="fur"   d="M50 122 C46 84 54 48 70 30 C88 36 112 58 130 80 Z"/>
+                <path class="earIn" d="M66 104 C64 80 70 60 77 50 C89 58 103 70 113 82 Z"/>
+              </g>
+              <g id="earR">
+                <path class="fur"   d="M250 122 C254 84 246 48 230 30 C212 36 188 58 170 80 Z"/>
+                <path class="earIn" d="M234 104 C236 80 230 60 223 50 C211 58 197 70 187 82 Z"/>
+              </g>
+
+              <!-- head -->
+              <ellipse class="fur" cx="150" cy="150" rx="120" ry="92"/>
+
+              <!-- eyes: a closed curve, plus an open eye that fades/stretches in -->
+              <g transform="translate(104 148)">
+                <path class="line eye-closed" d="M-15 -2 Q0 10 15 -2"/>
+                <g class="eye-open">
+                  <ellipse rx="15" ry="12" fill="var(--eye)"/>
+                  <ellipse cx="0" cy="3" rx="4" ry="7.5" fill="var(--pupil)"/>
+                  <circle cx="-5" cy="-3" r="2.2" fill="var(--eyeShine)"/>
+                </g>
+              </g>
+              <g transform="translate(196 148)">
+                <path class="line eye-closed" d="M-15 -2 Q0 10 15 -2"/>
+                <g class="eye-open">
+                  <ellipse rx="15" ry="12" fill="var(--eye)"/>
+                  <ellipse cx="0" cy="3" rx="4" ry="7.5" fill="var(--pupil)"/>
+                  <circle cx="-5" cy="-3" r="2.2" fill="var(--eyeShine)"/>
+                </g>
+              </g>
+
+              <!-- nose -->
+              <path d="M143 171 Q150 166 157 171 Q154 177 150 178 Q146 177 143 171 Z" fill="var(--nose)"/>
+
+              <!-- mouth (+ a hidden open mouth used for yawns) -->
+              <g id="mouth">
+                <path class="line" d="M150 178 L150 182 M150 182 Q144 189 137 186 M150 182 Q156 189 163 186" style="stroke-width:2.6"/>
+                <g id="yawn">
+                  <ellipse cx="150" cy="190" rx="8" ry="9.5" fill="var(--mouthInside)" stroke="var(--line)" stroke-width="2"/>
+                  <ellipse cx="150" cy="196" rx="4.5" ry="3" fill="var(--nose)"/>
+                </g>
+              </g>
+
+              <!-- whiskers -->
+              <g id="whL"><path class="whisker" d="M96 180 L50 173 M96 188 L48 191"/></g>
+              <g id="whR"><path class="whisker" d="M204 180 L250 173 M204 188 L252 191"/></g>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <!-- Control mode: a plain, dim, static clock -->
+      <div id="clock">--:--</div>
+    </div>
+  </div>
+</div>
+
+<!-- ====================== Researcher: resume screen ====================== -->
+<div id="resume">
+  <b>CatNap</b>
+  <div>Settings are saved.<br>Tap anywhere to start the session.</div>
+  <div class="muted">To reach setup during a session, tap the top-left corner 3 times quickly.</div>
+  <button id="openSetup">Open setup</button>
+</div>
+
+<!-- ====================== Researcher: setup panel ====================== -->
+<div id="setup">
+  <div class="head-row">
+    <h1>CatNap · setup</h1>
+    <button id="collapse">Hide panel</button>
+  </div>
+  <div class="body">
+    <div class="sec">
+      <h2>Position</h2>
+      <div class="muted">Drag the face to line it up with the dock's head opening. Pinch, or use the slider, to resize.</div>
+      <div class="row"><span>Size</span><input type="range" id="size" min="0.3" max="3" step="0.01"><button id="resetPos">Reset</button></div>
+    </div>
+
+    <div class="sec">
+      <h2>Breathing rate</h2>
+      <div class="row"><input type="range" id="bpmRange" min="6" max="60" step="1"><input type="number" id="bpm" min="6" max="60"> <span class="muted">/ min</span></div>
+    </div>
+
+    <div class="sec">
+      <h2>Condition</h2>
+      <div class="seg"><button id="modeCat">Cat</button><button id="modeControl">Control (clock)</button></div>
+    </div>
+
+    <div class="sec">
+      <button class="primary" id="start">Start session</button>
+      <div class="muted" style="margin-top:8px">Asks for motion-sensor access, keeps the screen on, and shows the resting screen.
+        Reopen this panel by tapping the top-left corner 3 times quickly. Doing so ends the session.</div>
+      <div class="mono" id="sensorStatus" style="margin-top:8px"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Research log</h2>
+      <div class="row"><span id="logCount">0 events</span></div>
+      <div class="row"><button id="export">Export CSV</button><button id="clear" class="danger">Clear log</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
